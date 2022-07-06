@@ -2,7 +2,11 @@
 #include <math.h>
 #include <iostream>
 
-float loopyboi = 1;
+#include "ValveStates.h"
+
+ValveState bangValveState = ValveState::Closed;
+float loopyboi = 295;
+IntervalTimer pressureUpdateInterval;
 IntervalTimer banbBangcontrollerInterval;
 
 int unitConversionCosnt = 6895;
@@ -47,14 +51,10 @@ float mostRecentIndex = 5;
 float IngegralArray[size2] = {};
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
-float i = 0;
-float Kp = 1;
-float Kd = -1;
-float Ki = -5;
+float Kp = 2.5;
+float Kd = 0;
+float Ki = 0;
 float Integral = 0;
-bool valveOpen = false;
-bool valveClosing = false;
-bool valveOpening = false;
 
 
   int arrayWrapSizeLinReg = 0;
@@ -236,13 +236,15 @@ float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, f
   e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
   e_i = reimannSum_PID(inputArrayPID, timeStep, integrationSteps);    // integral function calculation
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 8, timeStep);    // derivative function calculation
-  Serial.println("insidePID: ");
-  Serial.println(e_p);
-  Serial.println(e_i);
-  Serial.println(e_d);
+
 
   // normalizes units to be in PSI
   funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) - (K_d*(e_d * timeStep));
+  Serial.println("insidePID: ");
+  Serial.println(e_p);
+  Serial.println(e_i);
+  Serial.println(e_d);  
+  Serial.println(funcOutput);
   return funcOutput;
 }
 // testing bullshit
@@ -250,66 +252,8 @@ float IntegralResult = 0;
 float DerivativeResult = 0;
 float PIDResult = 0;
 
-
-
-void bangbangController(float bandPIDoutput, float controllerThreshold)
-{
-
-  if (valveOpening)
-  {
-    if (valveTimer >= 100)    // X ms opening/closing time
-    {
-      valveOpening = false;
-    }
-  }
-  if (valveClosing)
-  {
-    if (valveTimer >= 100)    // X ms opening/closing time
-    {
-      valveClosing = false;
-    }
-  }
-
-  if (bandPIDoutput > controllerThreshold)
-  {
-    //open valve
-    if (!valveClosing)
-    {
-      valveOpen = true;
-      valveOpening = true;
-      valveTimer = 0;
-    }
-    
-  }
-  if (bandPIDoutput < controllerThreshold)
-  {
-    //close valve
-    if (!valveOpening)
-    {
-      valveOpen = false;
-      valveClosing = true;
-      valveTimer = 0;
-    }  }
-  
-}
-
-float CurrTankPress(float TankPropMass)
-{
-  gasDensity = TankPropMass/TankVolume;
-  TankPressure = gasDensity*AirGasConstant*ATPtemp;
-  return TankPressure;
-}
-
-float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
-{
-  massFlow = Cd*UpstreamPressure*chockedOrificeArea*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*((Gamma+1)/(Gamma-1)))*((Gamma+1)/(Gamma-1)))*(1/2);
-  return massFlow;
-}
-
-
 int sizeInputArrayInsert = 0;
 int arrayMostRecentPositionInsert = 0;
-
 // utility function for running a rolling array
 // float array version - !!!!! Not Protected from if you put negative signed floats for the index values !!!!!
 void writeToRollingArray(float rollingArray[], float newInputArrayValue)
@@ -349,12 +293,97 @@ void writeToRollingArray(float rollingArray[], float newInputArrayValue)
 } */
 
 
+
+void bangbangController(float bandPIDoutput, float controllerThreshold)
+{
+//Serial.println("is this thing on?");
+  // Update ValveState from the "Banging" ones to Open/Closed where they are allowed to be energized/deenergized again
+  // When converting this to run valves on real RocketDriver code, need to use commanded open/closed states.
+  if (bangValveState == ValveState::BangingOpen)
+  {
+    if (valveTimer >= 1000)    // X ms opening/closing time
+    {
+      bangValveState = ValveState::Open;
+    }
+  }
+  if (bangValveState == ValveState::BangingClosed)
+  {
+    if (valveTimer >= 1000)    // X ms opening/closing time
+    {
+      bangValveState = ValveState::Closed;
+    }
+  }
+  // Update ValveState if Open/Closed based on PID controller output
+  if (bandPIDoutput < ((-1)*controllerThreshold))
+  {
+    //open valve
+    if (bangValveState == ValveState::Closed)
+    {
+      bangValveState = ValveState::BangingOpen;
+      valveTimer = 0;
+    }
+    
+  }
+  if (bandPIDoutput > (controllerThreshold))
+  {
+    //close valve
+    if (bangValveState == ValveState::Open)
+    {
+      bangValveState = ValveState::BangingClosed;
+      valveTimer = 0;
+    }
+  }
+  //Serial.println(static_cast<uint8_t>(bangValveState));
+}
+
+float CurrTankPress(float TankPropMass)
+{
+  gasDensity = TankPropMass/TankVolume;
+  TankPressure = gasDensity*AirGasConstant*ATPtemp;
+  return TankPressure;
+}
+
+float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
+{
+  massFlow = Cd*UpstreamPressure*chockedOrificeArea*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*((Gamma+1)/(Gamma-1)))*((Gamma+1)/(Gamma-1)))*(1/2);
+  return massFlow;
+}
+
+//for interrupt timers, not sure how to setup to run the other stuff yet. Need to pass everything into this, then into other functions inside?
+// it should work fine, anything that needs to be updated to pass into the functions will pass through every time the interrupt runs (I think)
+void pressureUpdateFunction()
+{
+  if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
+  {
+  loopyboi = loopyboi + .01;
+  //Serial.println("we are Open");
+  }
+  if (bangValveState == ValveState::Closed || bangValveState == ValveState::BangingClosed)
+  {
+  loopyboi = loopyboi - .01;
+  //Serial.println("bitch we closed");
+  }
+  Serial.println(loopyboi);
+}
+
+void controllerUpdateFunction()
+{
+  PIDmath(IngegralArray,300,TimeDelta,8, Kp, Ki, Kd, .1);
+  bangbangController(PIDResult, 2.5);
+  writeToRollingArray(IngegralArray, loopyboi);
+
+}
+
+
 void setup() {
   // put your setup code here, to run once:
 pastnArr [0] = size;
 pastNDpArr[0] = {size2};
 
-
+pressureUpdateInterval.begin(pressureUpdateFunction, 5000);
+pressureUpdateInterval.priority(126);
+banbBangcontrollerInterval.begin(controllerUpdateFunction, 10000);
+banbBangcontrollerInterval.priority(124);
 
 // testing bullshit
 IngegralArray[0] = {size};
@@ -368,14 +397,14 @@ IngegralArray[7] = {310};
 IngegralArray[8] = {315};
 IngegralArray[9] = {320}; */
 // tweaked version to have most recent value at index 5
-IngegralArray[5] = {285};
-IngegralArray[6] = {290};
-IngegralArray[7] = {295};
-IngegralArray[8] = {300};
-IngegralArray[9] = {305};
-IngegralArray[2] = {310};
-IngegralArray[3] = {315};
-IngegralArray[4] = {320};
+IngegralArray[5] = {250};
+IngegralArray[6] = {250};
+IngegralArray[7] = {250};
+IngegralArray[8] = {250};
+IngegralArray[9] = {250};
+IngegralArray[2] = {250};
+IngegralArray[3] = {250};
+IngegralArray[4] = {250};
 }
 
 void loop() 
@@ -384,16 +413,15 @@ void loop()
 // testing bullshit
 
 
-PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
-Serial.print("PID function output: ");
-Serial.println(PIDResult);
+//PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
+//Serial.print("PID function output: ");
+//Serial.println(PIDResult);
 
-bangbangController(PIDResult, 0.5);
 
 // fuck around and find out with array functions
-loopyboi = loopyboi +3.1415;
-writeToRollingArray(IngegralArray, loopyboi);
-
+//loopyboi = loopyboi +0.15;
+//writeToRollingArray(IngegralArray, loopyboi);
+//Serial.println(loopyboi);
 /* Serial.print("Array readout: ");
 for (size_t i = 2; i < 10; i++)
 {
