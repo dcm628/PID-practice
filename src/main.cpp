@@ -3,6 +3,7 @@
 #include <iostream>
 
 float loopyboi = 1;
+IntervalTimer banbBangcontrollerInterval;
 
 int unitConversionCosnt = 6895;
 float TankVolume = 0.1; //m^3
@@ -23,6 +24,13 @@ float DeadBand = unitConversionCosnt* 10;
 float CurrPressure = 0;
 float MinimumValveOpenTime = 0.1;
 float CurrValveOpenTime = 0;
+elapsedMillis valveTimer;
+float gasDensity = 0;
+float TankPropMass = 0;
+float TankPressure = 0;
+float massFlow = 0;
+
+
 /* float TankPressArray[];
 float PossibleTankPressArray[];
 float optimalArray[];
@@ -44,7 +52,9 @@ float Kp = 1;
 float Kd = -1;
 float Ki = -5;
 float Integral = 0;
-bool closing = false;
+bool valveOpen = false;
+bool valveClosing = false;
+bool valveOpening = false;
 
 
   int arrayWrapSizeLinReg = 0;
@@ -62,8 +72,6 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   // !!!!! - index[1] = array index for the starting point which is most recent entry, with next most recent the next highest index and so on
   sizeInputArrayLinReg = static_cast<int>(inputArrayLinReg[0]);
   arrayMostRecentPositionLinReg = static_cast<int>(inputArrayLinReg[1]);
-  //regression_PIDOutput = 0;
-
     // if statement to handle case where the input Array is smaller than the set number of terms to integrate over
   if (sizeInputArrayLinReg < regressionSamples)
   {
@@ -233,13 +241,70 @@ float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, f
   Serial.println(e_i);
   Serial.println(e_d);
 
-  funcOutput = (K_p*e_p) + (K_i*e_i) + ((K_d*e_d)/integrationSteps);
+  // normalizes units to be in PSI
+  funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) - (K_d*(e_d * timeStep));
   return funcOutput;
 }
 // testing bullshit
 float IntegralResult = 0;
 float DerivativeResult = 0;
 float PIDResult = 0;
+
+
+
+void bangbangController(float bandPIDoutput, float controllerThreshold)
+{
+
+  if (valveOpening)
+  {
+    if (valveTimer >= 100)    // X ms opening/closing time
+    {
+      valveOpening = false;
+    }
+  }
+  if (valveClosing)
+  {
+    if (valveTimer >= 100)    // X ms opening/closing time
+    {
+      valveClosing = false;
+    }
+  }
+
+  if (bandPIDoutput > controllerThreshold)
+  {
+    //open valve
+    if (!valveClosing)
+    {
+      valveOpen = true;
+      valveOpening = true;
+      valveTimer = 0;
+    }
+    
+  }
+  if (bandPIDoutput < controllerThreshold)
+  {
+    //close valve
+    if (!valveOpening)
+    {
+      valveOpen = false;
+      valveClosing = true;
+      valveTimer = 0;
+    }  }
+  
+}
+
+float CurrTankPress(float TankPropMass)
+{
+  gasDensity = TankPropMass/TankVolume;
+  TankPressure = gasDensity*AirGasConstant*ATPtemp;
+  return TankPressure;
+}
+
+float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
+{
+  massFlow = Cd*UpstreamPressure*chockedOrificeArea*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*((Gamma+1)/(Gamma-1)))*((Gamma+1)/(Gamma-1)))*(1/2);
+  return massFlow;
+}
 
 
 int sizeInputArrayInsert = 0;
@@ -251,9 +316,9 @@ void writeToRollingArray(float rollingArray[], float newInputArrayValue)
 {
   sizeInputArrayInsert = static_cast<int>(rollingArray[0]);
   arrayMostRecentPositionInsert = static_cast<int>(rollingArray[1]);
-  Serial.print("writeArray vars: ");
+/*   Serial.print("writeArray vars: ");
   Serial.print(sizeInputArrayInsert);
-  Serial.println(arrayMostRecentPositionInsert);
+  Serial.println(arrayMostRecentPositionInsert); */
 
   if (arrayMostRecentPositionInsert == (sizeInputArrayInsert + 1)) // special case for being at the end of the array
   {
@@ -313,50 +378,28 @@ IngegralArray[3] = {315};
 IngegralArray[4] = {320};
 }
 
-void loop() {
+void loop() 
+{
 
 // testing bullshit
-IntegralResult = TimeDelta*(IngegralArray[2]+IngegralArray[3]+IngegralArray[4]+IngegralArray[5]+IngegralArray[6]+IngegralArray[7]+IngegralArray[8]+IngegralArray[9]);
-//Serial.println("Integral Array Size: ");
-//Serial.print(IngegralArray[0]);
-Serial.print("Integral Array Sum: ");
-Serial.println(IntegralResult);
 
-Serial.print("Integral Array Sum From Riemann Function: ");
-Serial.println(reimannSum_PID(IngegralArray, TimeDelta, 8));
-
-Serial.print("linear regression function slope: ");
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 8, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 7, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 6, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 5, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 4, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 3, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 2, TimeDelta);
-Serial.println(DerivativeResult);
-DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 1, TimeDelta);
-Serial.println(DerivativeResult);
 
 PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
 Serial.print("PID function output: ");
 Serial.println(PIDResult);
 
+bangbangController(PIDResult, 0.5);
+
 // fuck around and find out with array functions
 loopyboi = loopyboi +3.1415;
 writeToRollingArray(IngegralArray, loopyboi);
 
-Serial.print("Array readout: ");
+/* Serial.print("Array readout: ");
 for (size_t i = 2; i < 10; i++)
 {
 Serial.print(" : ");
 Serial.print(IngegralArray[i]);
 }
-Serial.println();
-delay(1000);
+Serial.println(); */
+
 }
