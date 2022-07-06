@@ -71,7 +71,7 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   }
   else regression_n = regressionSamples;
   // determine the overwrap value, if any
-  arrayWrapSizeLinReg = regression_n - ((sizeInputArrayLinReg + 1) - (arrayMostRecentPositionLinReg));
+  arrayWrapSizeLinReg =  (-1) * ((arrayMostRecentPositionLinReg - regression_n) - 1);
 
   float sumX = 0;
   float sumY = 0;
@@ -82,61 +82,72 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   float a1LeastSquare = 0;
   // calculate the sum terms;
   // 
-    Serial.print("First for loop: ");
-    Serial.println(arrayWrapSizeLinReg);
-    if (arrayWrapSizeLinReg == sizeInputArrayLinReg)    // hacky workaround for if the overwrap number is whole array, should fix the math for this to just math out to 0 normally
+    //Serial.print("First for loop: ");
+    //Serial.println(arrayWrapSizeLinReg);
+    if (arrayWrapSizeLinReg <= 0)    // when there is no wrap required, calculated value will be zero or negative. Set to zero.
     {
       arrayWrapSizeLinReg = 0;
     }
-    
+    //Serial.print("overwrap after zero set: ");
+    //Serial.println(arrayWrapSizeLinReg);
   if (arrayWrapSizeLinReg > 0)  //only true if there are enough array values to use to wrap the end of the array
   {
-    for (int i = arrayMostRecentPositionLinReg; i < (sizeInputArrayLinReg + 2); i++)
+    for (int i = arrayMostRecentPositionLinReg; i > (1); i--)
     {
-      sumX = sumX + ((regression_n - (i - arrayMostRecentPositionLinReg + 1))*timeStep);
-      sumXX = sumXX + (((regression_n - (i - arrayMostRecentPositionLinReg + 1))*timeStep)*((regression_n - (i - arrayMostRecentPositionLinReg + 1))*timeStep));
+      sumX = sumX + ((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep);
+      sumXX = sumXX + (((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep)*((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep));
       sumY = sumY + inputArrayLinReg[i];
-      sumXY = sumXY + (inputArrayLinReg[i] * ((regression_n - (i - arrayMostRecentPositionLinReg + 1))*timeStep));
-      Serial.println(((regression_n - (i - arrayMostRecentPositionLinReg + 1))*timeStep));
-    }
-    for (int i = 2; i < (arrayWrapSizeLinReg + 1); i++)
+      sumXY = sumXY + (inputArrayLinReg[i] * ((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep));
+/*       Serial.print("DOES THIS EVER HAPPEN1: ");
+      Serial.print(i);
+      Serial.print(" : ");
+      Serial.println((i - (arrayMostRecentPositionLinReg - regression_n + 1)));
+ */    
+    }  
+
+    for (int i = (sizeInputArrayLinReg + 1); i > (sizeInputArrayLinReg + 1 - arrayWrapSizeLinReg); i--)
     {
-      sumX = sumX + ((regression_n - ((sizeInputArrayLinReg + 1 - (arrayMostRecentPositionLinReg)) + i))*timeStep);
-      sumXX = sumXX + (((regression_n - ((sizeInputArrayLinReg + 1 - (arrayMostRecentPositionLinReg)) + i))*timeStep)*((regression_n - ((sizeInputArrayLinReg + 1 - (arrayMostRecentPositionLinReg)) + i))*timeStep));
+      sumX = sumX + ((i + (arrayWrapSizeLinReg) - (sizeInputArrayLinReg) - 2)*timeStep);
+      sumXX = sumXX + (((i + (arrayWrapSizeLinReg) - (sizeInputArrayLinReg) - 2)*timeStep)*((i + (arrayWrapSizeLinReg) - (sizeInputArrayLinReg) - 2)*timeStep));
       sumY = sumY + inputArrayLinReg[i];
-      sumXY = sumXY + (inputArrayLinReg[i] * ((regression_n - ((sizeInputArrayLinReg + 1 - (arrayMostRecentPositionLinReg)) + i))*timeStep));
-      Serial.println(((regression_n - ((sizeInputArrayLinReg + 1 - (arrayMostRecentPositionLinReg)) + i))*timeStep));
-    }
+      sumXY = sumXY + (inputArrayLinReg[i] * ((i + (arrayWrapSizeLinReg) - (sizeInputArrayLinReg) - 2)*timeStep));
+/*       Serial.print("DOES THIS EVER HAPPEN2: ");
+      Serial.print(i);
+      Serial.print(" : ");
+      Serial.println((i + (arrayWrapSizeLinReg) - (sizeInputArrayLinReg) - 2));
+ */    
+    }  
   }
   else
   {
-    for (int i = arrayMostRecentPositionLinReg; i < (arrayMostRecentPositionLinReg + regression_n); i++)
+    for (int i = arrayMostRecentPositionLinReg; i > (arrayMostRecentPositionLinReg - regression_n); i--)
     {
-      sumX = sumX + (((arrayMostRecentPositionLinReg + regression_n - 1) - i)*timeStep);
-      sumXX = sumXX + ((((arrayMostRecentPositionLinReg + regression_n - 1) - i)*timeStep)*(((arrayMostRecentPositionLinReg + regression_n - 1) - i)*timeStep));
+      sumX = sumX + ((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep);
+      sumXX = sumXX + (((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep)*((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep));
       sumY = sumY + inputArrayLinReg[i];
-      sumXY = sumXY + (inputArrayLinReg[i+1] * ((inputArrayLinReg[0] - i - 1)*timeStep));
-      Serial.print("DOES THIS EVER HAPPEN: ");
+      sumXY = sumXY + (inputArrayLinReg[i] * ((i - (arrayMostRecentPositionLinReg - regression_n + 1))*timeStep));
+/*       Serial.print("DOES THIS EVER HAPPEN: ");
       Serial.print(i);
       Serial.print(" : ");
-      Serial.println(((arrayMostRecentPositionLinReg + regression_n - 1) - i));
+      Serial.println((i - (arrayMostRecentPositionLinReg - regression_n + 1)));
+ */    
     }
   }
-  Serial.print("sumX: ");
+/*   Serial.print("sumX: ");
   Serial.println(sumX,5);
   Serial.print("sumY: ");
   Serial.println(sumY,5);
   Serial.print("sumXX: ");
   Serial.println(sumXX,5);
   Serial.print("sumXY: ");
-  Serial.println(sumXY,5);
+  Serial.println(sumXY,5); */
 
   // calculate the denominator term
-  denLeastSquare = sizeInputArrayLinReg*sumXX - (sumX * sumX);
+  denLeastSquare = regression_n*sumXX - (sumX * sumX);
   //Serial.print("den: ");
   //Serial.println(denLeastSquare,5);
   // calculate the a1 term, which is the slope
-  a1LeastSquare = ((sizeInputArrayLinReg*sumXY) - (sumX*sumY))/denLeastSquare;
+  a1LeastSquare = ((regression_n*sumXY) - (sumX*sumY))/denLeastSquare;
   // calculate the a0 term, which is the linear offset
   // NOT USED IN PID VERSION
   // a0LeastSquare = ((sumXX*sumY) - (sumXY*sumX))/denLeastSquare;
@@ -317,13 +328,27 @@ Serial.println(reimannSum_PID(IngegralArray, TimeDelta, 8));
 Serial.print("linear regression function slope: ");
 DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 8, TimeDelta);
 Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 7, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 6, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 5, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 4, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 3, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 2, TimeDelta);
+Serial.println(DerivativeResult);
+DerivativeResult = linearRegressionLeastSquared_PID(IngegralArray, 1, TimeDelta);
+Serial.println(DerivativeResult);
 
 PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
 Serial.print("PID function output: ");
 Serial.println(PIDResult);
 
 // fuck around and find out with array functions
-loopyboi = loopyboi + 1;
+loopyboi = loopyboi +3.1415;
 writeToRollingArray(IngegralArray, loopyboi);
 
 Serial.print("Array readout: ");
