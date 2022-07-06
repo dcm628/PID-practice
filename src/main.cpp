@@ -6,6 +6,7 @@
 
 ValveState bangValveState = ValveState::Closed;
 float loopyboi = 295;
+float controllerTargetValue = 300;
 IntervalTimer pressureUpdateInterval;
 IntervalTimer banbBangcontrollerInterval;
 
@@ -51,9 +52,9 @@ float mostRecentIndex = 5;
 float IngegralArray[size2] = {};
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
-float Kp = 2.5;
-float Kd = 0;
-float Ki = 0;
+float Kp = 2;
+float Ki = 15;
+float Kd = .1;
 float Integral = 0;
 
 
@@ -167,8 +168,9 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   int arrayWrapSizeRSum = 0;
   int arrayMostRecentPositionRSum = 0;
   int sizeInputArrayRSum = 0;
+  float sumZeroPoint = 0;
 
-float reimannSum_PID(float inputArray[], float timeStep, int summationTermNum)
+float reimannSum_PID(float inputArray[], float timeStep, float sumZeroPoint, int summationTermNum)
 {
   // !!!!! - Function is built to expect arrays in format of:
   // !!!!! - index[0] = size of entries not counting this and the following, 
@@ -192,14 +194,14 @@ float reimannSum_PID(float inputArray[], float timeStep, int summationTermNum)
     {
       for (int i = arrayMostRecentPositionRSum; i < (sizeInputArrayRSum + 2); i++)
       {
-        sum_PIDOutput = sum_PIDOutput + (inputArray[i] * timeStep);
+        sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
         //Serial.print("sum_PIDOutput: ");
         //Serial.println(sum_PIDOutput);
 
       }
       for (int i = 2; i < (arrayWrapSizeRSum + 1); i++)
       {
-        sum_PIDOutput = sum_PIDOutput + (inputArray[i] * timeStep);
+        sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
         //Serial.print("sum_PIDOutput: ");
         //Serial.println(sum_PIDOutput);
       }
@@ -208,7 +210,7 @@ float reimannSum_PID(float inputArray[], float timeStep, int summationTermNum)
   {
     for (int i = arrayMostRecentPositionRSum; i < (arrayMostRecentPositionRSum + reimann_n); i++)
     {
-      sum_PIDOutput = sum_PIDOutput + (inputArray[i] * timeStep);
+      sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
     }
   }
 
@@ -234,17 +236,29 @@ float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, f
   arrayMostRecentPositionPID = static_cast<int>(inputArrayPID[1]);
   // PID function calculations
   e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
-  e_i = reimannSum_PID(inputArrayPID, timeStep, integrationSteps);    // integral function calculation
+  e_i = reimannSum_PID(inputArrayPID, timeStep, controllerTargetValue, integrationSteps);    // integral function calculation
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 8, timeStep);    // derivative function calculation
 
 
   // normalizes units to be in PSI
   funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) - (K_d*(e_d * timeStep));
-  Serial.println("insidePID: ");
-  Serial.println(e_p);
-  Serial.println(e_i);
-  Serial.println(e_d);  
-  Serial.println(funcOutput);
+/*   Serial.println("insidePID: ");
+  Serial.print(K_p);
+  Serial.print(" : ");
+  Serial.print(e_p);
+  Serial.print(" : ");
+  Serial.println(K_p*(e_p));
+  Serial.print(K_i);
+  Serial.print(" : ");
+  Serial.print(e_i);
+  Serial.print(" : ");
+  Serial.println(K_i*(e_i/integrationSteps));
+  Serial.print(K_d);  
+  Serial.print(" : ");
+  Serial.print(e_d);  
+  Serial.print(" : ");
+  Serial.println(K_d*(e_d * timeStep));  
+  Serial.println(funcOutput); */
   return funcOutput;
 }
 // testing bullshit
@@ -301,20 +315,20 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
   // When converting this to run valves on real RocketDriver code, need to use commanded open/closed states.
   if (bangValveState == ValveState::BangingOpen)
   {
-    if (valveTimer >= 1000)    // X ms opening/closing time
+    if (valveTimer >= 150)    // X ms opening/closing time
     {
       bangValveState = ValveState::Open;
     }
   }
   if (bangValveState == ValveState::BangingClosed)
   {
-    if (valveTimer >= 1000)    // X ms opening/closing time
+    if (valveTimer >= 100)    // X ms opening/closing time
     {
       bangValveState = ValveState::Closed;
     }
   }
   // Update ValveState if Open/Closed based on PID controller output
-  if (bandPIDoutput < ((-1)*controllerThreshold))
+  if (bandPIDoutput > (controllerThreshold))
   {
     //open valve
     if (bangValveState == ValveState::Closed)
@@ -324,7 +338,7 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
     }
     
   }
-  if (bandPIDoutput > (controllerThreshold))
+  if (bandPIDoutput < ((-1)*controllerThreshold))
   {
     //close valve
     if (bangValveState == ValveState::Open)
@@ -355,12 +369,12 @@ void pressureUpdateFunction()
 {
   if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
   {
-  loopyboi = loopyboi + .01;
+  loopyboi = loopyboi + .2;
   //Serial.println("we are Open");
   }
   if (bangValveState == ValveState::Closed || bangValveState == ValveState::BangingClosed)
   {
-  loopyboi = loopyboi - .01;
+  loopyboi = loopyboi - .1;
   //Serial.println("bitch we closed");
   }
   Serial.println(loopyboi);
@@ -368,8 +382,8 @@ void pressureUpdateFunction()
 
 void controllerUpdateFunction()
 {
-  PIDmath(IngegralArray,300,TimeDelta,8, Kp, Ki, Kd, .1);
-  bangbangController(PIDResult, 2.5);
+  PIDResult = PIDmath(IngegralArray,controllerTargetValue,TimeDelta, 4, 0.1 , Kp, Ki, Kd);
+  bangbangController(PIDResult, 1);
   writeToRollingArray(IngegralArray, loopyboi);
 
 }
