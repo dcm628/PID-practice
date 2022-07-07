@@ -3,12 +3,18 @@
 #include <iostream>
 
 #include "ValveStates.h"
-
+int8_t testInt = 0;
 ValveState bangValveState = ValveState::Closed;
-float loopyboi = 295;
+float loopyboi = 0;
 float controllerTargetValue = 300;
 IntervalTimer pressureUpdateInterval;
 IntervalTimer banbBangcontrollerInterval;
+
+const int8_t size3 = 10; //max size for signed 8_t index value, I might need to make my function store these as uints and shift them to keep the indexing system at max
+int8_t mostRecentIndex8bitInt = 2;
+int8_t IngegralArray8bitInt[size3+2] = {};
+int16_t loopyboi2 = 0;
+bool loopyboi2Flag = false;
 
 int unitConversionCosnt = 6895;
 float TankVolume = 0.1; //m^3
@@ -47,14 +53,14 @@ float prevPressure = CurrPressure;
 bool hasbeenopened = false;
 bool ValveStillForceOpen = false;
 const int size = 8;
-const int size2 = 30;
+const int size2 = 200;
 float mostRecentIndex = 5;
 float IngegralArray[size2] = {};
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
 float Kp = 2;
-float Ki = 15;
-float Kd = .1;
+float Ki = 150;
+float Kd = .5;
 float Integral = 0;
 
 
@@ -71,8 +77,8 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   // !!!!! - Function is built to expect arrays in format of:
   // !!!!! - index[0] = size of entries not counting this and the following, 
   // !!!!! - index[1] = array index for the starting point which is most recent entry, with next most recent the next highest index and so on
-  sizeInputArrayLinReg = static_cast<int>(inputArrayLinReg[0]);
-  arrayMostRecentPositionLinReg = static_cast<int>(inputArrayLinReg[1]);
+  sizeInputArrayLinReg = static_cast<int>(inputArrayLinReg[0]+0.5);
+  arrayMostRecentPositionLinReg = static_cast<int>(inputArrayLinReg[1]+0.5);
     // if statement to handle case where the input Array is smaller than the set number of terms to integrate over
   if (sizeInputArrayLinReg < regressionSamples)
   {
@@ -170,16 +176,16 @@ float linearRegressionLeastSquared_PID(float inputArrayLinReg[], int regressionS
   int sizeInputArrayRSum = 0;
   float sumZeroPoint = 0;
 
-float reimannSum_PID(float inputArray[], float timeStep, float sumZeroPoint, int summationTermNum)
+float reimannSum_PID_float(float inputArray[], float timeStep, int summationTermNum, float sumZeroPoint = 0)
 {
   // !!!!! - Function is built to expect arrays in format of:
   // !!!!! - index[0] = size of entries not counting this and the following, 
   // !!!!! - index[1] = array index for the starting point which is most recent entry, with next most recent the next highest index and so on
   // using centered version of reimann sum
-  
-  sizeInputArrayRSum = static_cast<int>(inputArray[0]);
-  arrayMostRecentPositionRSum = static_cast<int>(inputArray[1]);
+  sizeInputArrayRSum = static_cast<int>(inputArray[0]+0.5);
+  arrayMostRecentPositionRSum = static_cast<int>(inputArray[1]+0.5);
   sum_PIDOutput = 0;
+  reimann_n = 0;
   // if statement to handle case where the input Array is smaller than the set number of terms to integrate over
   if (sizeInputArrayRSum < summationTermNum)
   {
@@ -218,6 +224,56 @@ float reimannSum_PID(float inputArray[], float timeStep, float sumZeroPoint, int
   return sum_PIDOutput;
 }
 
+  int8_t arrayMostRecentPositionRSum8bitInt = 0;
+  int8_t sizeInputArrayRSum8bitInt = 0;
+
+float reimannSum_PID_8bitInt(int8_t inputArray[], float timeStep, int summationTermNum, float sumZeroPoint = 0)
+{
+  // !!!!! - Function is built to expect arrays in format of:
+  // !!!!! - index[0] = size of entries not counting this and the following, 
+  // !!!!! - index[1] = array index for the starting point which is most recent entry, with next most recent the next highest index and so on
+  // using centered version of reimann sum
+  
+  sizeInputArrayRSum8bitInt = inputArray[0];
+  arrayMostRecentPositionRSum8bitInt = inputArray[1];
+  sum_PIDOutput = 0;
+  // if statement to handle case where the input Array is smaller than the set number of terms to integrate over
+  if (sizeInputArrayRSum8bitInt < summationTermNum)
+  {
+    reimann_n = sizeInputArrayRSum8bitInt;
+  }
+  else reimann_n = summationTermNum;
+  // determine the overwrap value, if any
+  arrayWrapSizeRSum = reimann_n - ((sizeInputArrayRSum8bitInt + 1) - (arrayMostRecentPositionRSum8bitInt));
+  //Serial.print("arrayWrapSizeRSum: ");
+  //Serial.println(arrayWrapSizeRSum);
+  if (arrayWrapSizeRSum > 0) //only true if there are enough array values to use to wrap the end of the array
+    {
+      for (int i = arrayMostRecentPositionRSum8bitInt; i < (sizeInputArrayRSum8bitInt + 2); i++)
+      {
+        sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
+        //Serial.print("sum_PIDOutput: ");
+        //Serial.println(sum_PIDOutput);
+
+      }
+      for (int i = 2; i < (arrayWrapSizeRSum + 1); i++)
+      {
+        sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
+        //Serial.print("sum_PIDOutput: ");
+        //Serial.println(sum_PIDOutput);
+      }
+    }
+  else
+  {
+    for (int i = arrayMostRecentPositionRSum8bitInt; i < (arrayMostRecentPositionRSum8bitInt + reimann_n); i++)
+    {
+      sum_PIDOutput = sum_PIDOutput + ((inputArray[i] - sumZeroPoint) * timeStep);
+    }
+  }
+
+  
+  return sum_PIDOutput;
+}
 
 float measurementArray [100]= {}; // up to 100 measured values at a time to use in controller
 
@@ -226,6 +282,7 @@ float measurementArray [100]= {}; // up to 100 measured values at a time to use 
   float e_i = 0;
   float e_d = 0;
   int arrayMostRecentPositionPID = 0;
+  bool PIDmathPrintFlag = false;
 
 float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, float integrationSteps, float errorThreshold, float K_p, float K_i, float K_d)
 {
@@ -233,32 +290,35 @@ float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, f
   e_p = 0;
   e_i = 0;
   e_d = 0;
-  arrayMostRecentPositionPID = static_cast<int>(inputArrayPID[1]);
+  arrayMostRecentPositionPID = static_cast<int>(inputArrayPID[1]+0.5);
   // PID function calculations
   e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
-  e_i = reimannSum_PID(inputArrayPID, timeStep, controllerTargetValue, integrationSteps);    // integral function calculation
+  e_i = reimannSum_PID_float(inputArrayPID, timeStep, integrationSteps, controllerTargetValue);    // integral function calculation
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 8, timeStep);    // derivative function calculation
 
 
   // normalizes units to be in PSI
-  funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) - (K_d*(e_d * timeStep));
-/*   Serial.println("insidePID: ");
-  Serial.print(K_p);
-  Serial.print(" : ");
-  Serial.print(e_p);
-  Serial.print(" : ");
-  Serial.println(K_p*(e_p));
-  Serial.print(K_i);
-  Serial.print(" : ");
-  Serial.print(e_i);
-  Serial.print(" : ");
-  Serial.println(K_i*(e_i/integrationSteps));
-  Serial.print(K_d);  
-  Serial.print(" : ");
-  Serial.print(e_d);  
-  Serial.print(" : ");
-  Serial.println(K_d*(e_d * timeStep));  
-  Serial.println(funcOutput); */
+  funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) + (K_d*(e_d * timeStep)); //still not 100% sure on signs, particularly the d
+  if (PIDmathPrintFlag)
+  {
+    Serial.println("insidePID: ");
+    Serial.print(K_p);
+    Serial.print(" : ");
+    Serial.print(e_p);
+    Serial.print(" : ");
+    Serial.println(K_p*(e_p));
+    Serial.print(K_i);
+    Serial.print(" : ");
+    Serial.print(e_i);
+    Serial.print(" : ");
+    Serial.println(K_i*(e_i/integrationSteps));
+    Serial.print(K_d);  
+    Serial.print(" : ");
+    Serial.print(e_d);  
+    Serial.print(" : ");
+    Serial.println(K_d*(e_d * timeStep));  
+    Serial.println(funcOutput);
+  }
   return funcOutput;
 }
 // testing bullshit
@@ -272,8 +332,8 @@ int arrayMostRecentPositionInsert = 0;
 // float array version - !!!!! Not Protected from if you put negative signed floats for the index values !!!!!
 void writeToRollingArray(float rollingArray[], float newInputArrayValue)
 {
-  sizeInputArrayInsert = static_cast<int>(rollingArray[0]);
-  arrayMostRecentPositionInsert = static_cast<int>(rollingArray[1]);
+  sizeInputArrayInsert = static_cast<int>(rollingArray[0]+0.5);
+  arrayMostRecentPositionInsert = static_cast<int>(rollingArray[1]+0.5);
 /*   Serial.print("writeArray vars: ");
   Serial.print(sizeInputArrayInsert);
   Serial.println(arrayMostRecentPositionInsert); */
@@ -306,23 +366,108 @@ void writeToRollingArray(float rollingArray[], float newInputArrayValue)
   }
 } */
 
+int32_t differencedIntValue = 0;
+int arrayBitDepth = 0;
+void writeToDifferencedIntArray(int8_t differencedRollingArray[], int newInputArrayValue, int arrayBitDepth, int differencedZeroPoint = 0)
+{
+  differencedIntValue = newInputArrayValue - differencedZeroPoint;
+  Serial.print("inside diff write");
+  Serial.println(differencedIntValue);
+  if(arrayBitDepth <= 8)
+  {
+    // overflow capping into signed 8 bit int range
+    if (differencedIntValue >= 127)
+    {
+      differencedIntValue = 127;
+    }
+    if (differencedIntValue <= -128)
+    {
+      differencedIntValue = -128;
+    }
+  }
+/*   
+  else if(arrayBitDepth > 8 && arrayBitDepth <= 16)
+  {
+    // overflow capping into signed 16 bit int range
+    if (differencedIntValue >= 32,767)
+    {
+      differencedIntValue = 32,767;
+    }
+    if (differencedIntValue <= -32,768)
+    {
+      differencedIntValue = -32,768;
+    }
+  }
+  else if(arrayBitDepth > 16 && arrayBitDepth <= 32)
+  {
+    // overflow capping into signed 32 bit int range
+    if (differencedIntValue >= 2,147,483,647)
+    {
+      differencedIntValue = 2,147,483,647;
+    }
+    if (differencedIntValue <= -2,147,483,648)
+    {
+      differencedIntValue = -2,147,483,648;
+    }
+  }
+  else if(arrayBitDepth > 32 && arrayBitDepth <= 64)
+  {
+    // overflow capping into signed 64 bit int range
+    if (differencedIntValue >= 9,223,372,036,854,775,807)
+    {
+      differencedIntValue = 9,223,372,036,854,775,807;
+    }
+    if (differencedIntValue <= -9,223,372,036,854,775,808)
+    {
+      differencedIntValue = -9,223,372,036,854,775,808;
+    }
+  }
+  
+ */  
+    sizeInputArrayInsert = (differencedRollingArray[0]);
+  arrayMostRecentPositionInsert = (differencedRollingArray[1]);
+/*   Serial.print("writeArray vars: ");
+  Serial.print(sizeInputArrayInsert);
+  Serial.println(arrayMostRecentPositionInsert); */
 
+  if (arrayMostRecentPositionInsert == (sizeInputArrayInsert + 1)) // special case for being at the end of the array
+  {
+    differencedRollingArray[1] = 2;
+    differencedRollingArray[2] = static_cast<int8_t>(differencedIntValue);
+  }
+  else
+  {
+    differencedRollingArray[1] = arrayMostRecentPositionInsert + 1;
+    differencedRollingArray[arrayMostRecentPositionInsert + 1] = static_cast<int8_t>(differencedIntValue);
+  }
+}
 
 void bangbangController(float bandPIDoutput, float controllerThreshold)
 {
 //Serial.println("is this thing on?");
   // Update ValveState from the "Banging" ones to Open/Closed where they are allowed to be energized/deenergized again
   // When converting this to run valves on real RocketDriver code, need to use commanded open/closed states.
+  
+  //simulating the real prop control that will progress valve through opening states - skipping the process one, for this it doesn't matter
+  if (bangValveState == ValveState::BangOpenCommanded)
+  {
+    bangValveState = ValveState::BangingOpen;
+  }
+  if (bangValveState == ValveState::BangCloseCommanded)
+  {
+    bangValveState = ValveState::BangingClosed;
+  }
+  //minimum bang time lockouts, once they are up the valves go to plain Open/Closed states which unlocks them to be commanded again
   if (bangValveState == ValveState::BangingOpen)
   {
-    if (valveTimer >= 150)    // X ms opening/closing time
+    if (valveTimer >= 100)    // X ms opening/closing time
     {
       bangValveState = ValveState::Open;
     }
   }
   if (bangValveState == ValveState::BangingClosed)
   {
-    if (valveTimer >= 100)    // X ms opening/closing time
+    if (valveTimer >= 50)    // X ms opening/closing time
     {
       bangValveState = ValveState::Closed;
     }
@@ -333,7 +478,7 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
     //open valve
     if (bangValveState == ValveState::Closed)
     {
-      bangValveState = ValveState::BangingOpen;
+      bangValveState = ValveState::BangOpenCommanded;
       valveTimer = 0;
     }
     
@@ -343,7 +488,7 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
     //close valve
     if (bangValveState == ValveState::Open)
     {
-      bangValveState = ValveState::BangingClosed;
+      bangValveState = ValveState::BangCloseCommanded;
       valveTimer = 0;
     }
   }
@@ -369,20 +514,20 @@ void pressureUpdateFunction()
 {
   if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
   {
-  loopyboi = loopyboi + .2;
+  loopyboi = loopyboi + .25;
   //Serial.println("we are Open");
   }
   if (bangValveState == ValveState::Closed || bangValveState == ValveState::BangingClosed)
   {
-  loopyboi = loopyboi - .1;
+  loopyboi = loopyboi - .15;
   //Serial.println("bitch we closed");
   }
-  Serial.println(loopyboi);
+  //Serial.println(loopyboi);
 }
 
 void controllerUpdateFunction()
 {
-  PIDResult = PIDmath(IngegralArray,controllerTargetValue,TimeDelta, 4, 0.1 , Kp, Ki, Kd);
+  PIDResult = PIDmath(IngegralArray,controllerTargetValue,TimeDelta, 50, 0.1 , Kp, Ki, Kd);
   bangbangController(PIDResult, 1);
   writeToRollingArray(IngegralArray, loopyboi);
 
@@ -411,21 +556,34 @@ IngegralArray[7] = {310};
 IngegralArray[8] = {315};
 IngegralArray[9] = {320}; */
 // tweaked version to have most recent value at index 5
-IngegralArray[5] = {250};
-IngegralArray[6] = {250};
-IngegralArray[7] = {250};
-IngegralArray[8] = {250};
-IngegralArray[9] = {250};
-IngegralArray[2] = {250};
-IngegralArray[3] = {250};
-IngegralArray[4] = {250};
+IngegralArray[5] = {0};
+IngegralArray[6] = {0};
+IngegralArray[7] = {0};
+IngegralArray[8] = {0};
+IngegralArray[9] = {0};
+IngegralArray[2] = {0};
+IngegralArray[3] = {0};
+IngegralArray[4] = {0};
+
+
+IngegralArray8bitInt[0] = {size3};
+IngegralArray8bitInt[1] = {mostRecentIndex8bitInt};
+IngegralArray8bitInt[3] = {0};
+IngegralArray8bitInt[4] = {0};
+IngegralArray8bitInt[5] = {0};
+IngegralArray8bitInt[6] = {0};
+IngegralArray8bitInt[7] = {0};
+IngegralArray8bitInt[8] = {0};
+IngegralArray8bitInt[9] = {0};
+IngegralArray8bitInt[10] = {0};
+
 }
 
 void loop() 
 {
 
 // testing bullshit
-
+PIDmathPrintFlag = false;   //to toggle the PID prints
 
 //PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
 //Serial.print("PID function output: ");
@@ -433,15 +591,38 @@ void loop()
 
 
 // fuck around and find out with array functions
-//loopyboi = loopyboi +0.15;
-//writeToRollingArray(IngegralArray, loopyboi);
-//Serial.println(loopyboi);
-/* Serial.print("Array readout: ");
-for (size_t i = 2; i < 10; i++)
+if (loopyboi2Flag)
+{
+  loopyboi2 = loopyboi2 +1;
+  if (loopyboi2 >= 150)
+  {
+    loopyboi2Flag = false;
+  }
+}
+if (!loopyboi2Flag)
+{
+  loopyboi2 = loopyboi2 -1;
+  if (loopyboi2 <= -150)
+  {
+    loopyboi2Flag = true;
+  }
+}
+
+writeToDifferencedIntArray(IngegralArray8bitInt, loopyboi2, 8);
+
+Serial.print("Array entry: ");
+Serial.print(loopyboi2);
+Serial.print(", Array readout most recent: ");
+Serial.println(IngegralArray8bitInt[IngegralArray8bitInt[1]]);
+delay(100);
+Serial.print("Array readout loop: ");
+for (size_t i = 2; i < 12; i++)
 {
 Serial.print(" : ");
-Serial.print(IngegralArray[i]);
+Serial.print(IngegralArray8bitInt[i]);
 }
-Serial.println(); */
-
+Serial.println();
+/* testInt = 300;
+Serial.print("testInt 8 bit overflow: ");
+Serial.println(PIDResult); */
 }

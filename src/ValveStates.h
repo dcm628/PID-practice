@@ -12,9 +12,13 @@ enum class ValveState
     CloseCommanded,     // 4
     OpenProcess,        // 5
     CloseProcess,       // 6
-    BangingOpen,          // 7
-    BangingClosed,         // 8
-    ValveState_SIZE,    // 9
+    BangOpenCommanded,  // 7
+    BangCloseCommanded, // 8
+    BangOpenProcess,    // 9
+    BangCloseProcess,   // 10
+    BangingOpen,        // 11
+    BangingClosed,      // 12
+    ValveState_SIZE,    // 13
 };
 
 #endif
