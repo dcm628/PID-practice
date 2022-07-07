@@ -3,22 +3,29 @@
 #include <iostream>
 
 #include "ValveStates.h"
+
 int8_t testInt = 0;
 ValveState bangValveState = ValveState::Closed;
 float loopyboi = 0;
 float controllerTargetValue = 300;
+int controllerTargetValueInt = static_cast<int>(controllerTargetValue+0.5);
 IntervalTimer pressureUpdateInterval;
 IntervalTimer banbBangcontrollerInterval;
 
-const int8_t size3 = 10; //max size for signed 8_t index value, I might need to make my function store these as uints and shift them to keep the indexing system at max
+const int8_t size3 = 125; //max size for signed 8_t index value, I might need to make my function store these as uints and shift them to keep the indexing system at max
 int8_t mostRecentIndex8bitInt = 2;
-int8_t IngegralArray8bitInt[size3+2] = {};
+const int size = 8;
+const int size2 = 125;
+float mostRecentIndex = 2;
+//float IntegralArray[size2+1] = {};
+int8_t IntegralArray8bitInt[size3+1] = {};
+float derivativeArray[size+1] = {};
 int16_t loopyboi2 = 0;
 bool loopyboi2Flag = false;
 
 int unitConversionCosnt = 6895;
 float TankVolume = 0.1; //m^3
-float OptimalTankPress = 300* unitConversionCosnt;
+float OptimalTankPress = controllerTargetValue* unitConversionCosnt;
 float orificeOutDiameter = 0.1*0.0254; //m
 float orificeOutArea = ((orificeOutDiameter*orificeOutDiameter)*M_PI)/4;
 float orificeInDiameter = 0.1*0.0254; //m
@@ -31,7 +38,6 @@ float Cd = 0.973;
 float Time = 0;
 float TimeDelta = .01;
 float TankMass = 0;
-float DeadBand = unitConversionCosnt* 10;
 float CurrPressure = 0;
 float MinimumValveOpenTime = 0.1;
 float CurrValveOpenTime = 0;
@@ -45,22 +51,17 @@ float massFlow = 0;
 /* float TankPressArray[];
 float PossibleTankPressArray[];
 float optimalArray[];
-float derivativeArray[];
 float ErrorArray[];
-float IngegralArray[]; */
+ */
 
-float prevPressure = CurrPressure;
-bool hasbeenopened = false;
-bool ValveStillForceOpen = false;
-const int size = 8;
-const int size2 = 200;
-float mostRecentIndex = 5;
-float IngegralArray[size2] = {};
+//float prevPressure = CurrPressure;
+//bool hasbeenopened = false;
+//bool ValveStillForceOpen = false;
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
-float Kp = 2;
-float Ki = 150;
-float Kd = .5;
+float Kp = 1.5;
+float Ki = 0;
+float Kd = 0;
 float Integral = 0;
 
 
@@ -284,21 +285,38 @@ float measurementArray [100]= {}; // up to 100 measured values at a time to use 
   int arrayMostRecentPositionPID = 0;
   bool PIDmathPrintFlag = false;
 
-float PIDmath(float inputArrayPID[], float controllerSetPoint, float timeStep, float integrationSteps, float errorThreshold, float K_p, float K_i, float K_d)
+float PIDmath(float inputArrayPID[], int8_t inputArrayIntPID[], float controllerSetPoint, float timeStep, float integrationSteps, float errorThreshold, float K_p, float K_i, float K_d)
 {
   funcOutput = 0;
   e_p = 0;
   e_i = 0;
   e_d = 0;
   arrayMostRecentPositionPID = static_cast<int>(inputArrayPID[1]+0.5);
-  // PID function calculations
+/*   // PID function calculations - OG float style
   e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
   e_i = reimannSum_PID_float(inputArrayPID, timeStep, integrationSteps, controllerTargetValue);    // integral function calculation
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 8, timeStep);    // derivative function calculation
+ */  
+  // PID function calculations - new integral differenced int style
+  e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
+  e_i = reimannSum_PID_8bitInt(inputArrayIntPID, timeStep, integrationSteps);    // integral function calculation
+  e_d = linearRegressionLeastSquared_PID(inputArrayPID, 5, timeStep);    // derivative function calculation
+
+/*     Serial.print(K_i);
+    Serial.print(" from 8bitInt: ");
+    Serial.print(e_i);
+    Serial.print(" : ");
+    Serial.println(K_i*(e_i/integrationSteps));
+    e_i = reimannSum_PID_float(inputArrayPID, timeStep, integrationSteps, controllerTargetValue);    // integral function calculation
+    Serial.print(K_i);
+    Serial.print(" from float: ");
+    Serial.print(e_i);
+    Serial.print(" : ");
+    Serial.println(K_i*(e_i/integrationSteps)); */
 
 
   // normalizes units to be in PSI
-  funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) + (K_d*(e_d * timeStep)); //still not 100% sure on signs, particularly the d
+  funcOutput = (K_p*(e_p)) - (K_i*(e_i/integrationSteps)) - (K_d*(e_d * timeStep)); //still not 100% sure on signs, particularly the d
   if (PIDmathPrintFlag)
   {
     Serial.println("insidePID: ");
@@ -371,8 +389,8 @@ int arrayBitDepth = 0;
 void writeToDifferencedIntArray(int8_t differencedRollingArray[], int newInputArrayValue, int arrayBitDepth, int differencedZeroPoint = 0)
 {
   differencedIntValue = newInputArrayValue - differencedZeroPoint;
-  Serial.print("inside diff write");
-  Serial.println(differencedIntValue);
+  //Serial.print("inside diff write");
+  //Serial.println(differencedIntValue);
   if(arrayBitDepth <= 8)
   {
     // overflow capping into signed 8 bit int range
@@ -460,14 +478,14 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
   //minimum bang time lockouts, once they are up the valves go to plain Open/Closed states which unlocks them to be commanded again
   if (bangValveState == ValveState::BangingOpen)
   {
-    if (valveTimer >= 100)    // X ms opening/closing time
+    if (valveTimer >= 200)    // X ms opening/closing time
     {
       bangValveState = ValveState::Open;
     }
   }
   if (bangValveState == ValveState::BangingClosed)
   {
-    if (valveTimer >= 50)    // X ms opening/closing time
+    if (valveTimer >= 100)    // X ms opening/closing time
     {
       bangValveState = ValveState::Closed;
     }
@@ -499,12 +517,22 @@ float CurrTankPress(float TankPropMass)
 {
   gasDensity = TankPropMass/TankVolume;
   TankPressure = gasDensity*AirGasConstant*ATPtemp;
+/*   Serial.print("Pizza TankPropMass: ");
+  Serial.println(TankPropMass);
+  Serial.print("Pizza TankVolume: ");
+  Serial.println(TankVolume);
+  Serial.print("Pizza gasDensity: ");
+  Serial.println(gasDensity);
+  Serial.print("Pizza TankPressure: ");
+  Serial.println(TankPressure); */
   return TankPressure;
 }
 
 float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
 {
-  massFlow = Cd*UpstreamPressure*chockedOrificeArea*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*(Gamma/AirGasConstant/ATPtemp*(2/(Gamma+1))*((Gamma+1)/(Gamma-1)))*((Gamma+1)/(Gamma-1)))*(1/2);
+  massFlow = Cd*UpstreamPressure*chockedOrificeArea*sqrt((Gamma/(AirGasConstant*ATPtemp))*pow((2/(Gamma+1)), ((Gamma+1)/(Gamma-1))));
+  //Serial.print("Pizza massFlow: ");
+  //Serial.println(massFlow);
   return massFlow;
 }
 
@@ -514,22 +542,43 @@ void pressureUpdateFunction()
 {
   if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
   {
-  loopyboi = loopyboi + .25;
+  //loopyboi = loopyboi + .25;
+  //loopyboi2 = static_cast<int>(loopyboi+0.5);
+
+  TankMass += ChokedMassFlow(COPVPress,orificeInArea)*TimeDelta;
+  TankMass -= ChokedMassFlow(CurrPressure*unitConversionCosnt,orificeOutArea)*TimeDelta;
   //Serial.println("we are Open");
   }
   if (bangValveState == ValveState::Closed || bangValveState == ValveState::BangingClosed)
   {
-  loopyboi = loopyboi - .15;
+  //loopyboi = loopyboi - .15;
+  //loopyboi2 = static_cast<int>(loopyboi+0.5);
   //Serial.println("bitch we closed");
+  //TankMass += ChokedMassFlow(COPVPress,orificeInArea)*TimeDelta;
+  TankMass -= ChokedMassFlow(CurrPressure*unitConversionCosnt,orificeOutArea)*TimeDelta;
   }
-  //Serial.println(loopyboi);
+  CurrPressure = CurrTankPress(TankMass)/unitConversionCosnt;
+/*   Serial.print("PizzaPress: ");
+  Serial.println(CurrTankPress(TankMass)/unitConversionCosnt); */
+  loopyboi = CurrPressure;
+  loopyboi2 = static_cast<int>(CurrPressure+0.5);
+  //Serial.print("Loopyboi: ");
+  Serial.println(loopyboi);
 }
 
 void controllerUpdateFunction()
 {
-  PIDResult = PIDmath(IngegralArray,controllerTargetValue,TimeDelta, 50, 0.1 , Kp, Ki, Kd);
+  PIDResult = PIDmath(derivativeArray, IntegralArray8bitInt, controllerTargetValue,TimeDelta, 100, 0.1 , Kp, Ki, Kd);
   bangbangController(PIDResult, 1);
-  writeToRollingArray(IngegralArray, loopyboi);
+  writeToRollingArray(derivativeArray, loopyboi);   //array for use in derivative
+  //writeToRollingArray(IngegralArray, loopyboi); //float integral array, not in use
+  writeToDifferencedIntArray(IntegralArray8bitInt, loopyboi2, 8, controllerTargetValueInt);
+
+
+/* Serial.print(", Array readout most recent: float: ");
+Serial.println(IngegralArray[static_cast<int>(IngegralArray[1])]);
+Serial.print(", Array readout most recent: int: ");
+Serial.println(IngegralArray8bitInt[IngegralArray8bitInt[1]]); */
 
 }
 
@@ -545,37 +594,12 @@ banbBangcontrollerInterval.begin(controllerUpdateFunction, 10000);
 banbBangcontrollerInterval.priority(124);
 
 // testing bullshit
-IngegralArray[0] = {size};
-IngegralArray[1] = {mostRecentIndex};
-/* IngegralArray[2] = {285};
-IngegralArray[3] = {290};
-IngegralArray[4] = {295};
-IngegralArray[5] = {300};
-IngegralArray[6] = {305};
-IngegralArray[7] = {310};
-IngegralArray[8] = {315};
-IngegralArray[9] = {320}; */
-// tweaked version to have most recent value at index 5
-IngegralArray[5] = {0};
-IngegralArray[6] = {0};
-IngegralArray[7] = {0};
-IngegralArray[8] = {0};
-IngegralArray[9] = {0};
-IngegralArray[2] = {0};
-IngegralArray[3] = {0};
-IngegralArray[4] = {0};
-
-
-IngegralArray8bitInt[0] = {size3};
-IngegralArray8bitInt[1] = {mostRecentIndex8bitInt};
-IngegralArray8bitInt[3] = {0};
-IngegralArray8bitInt[4] = {0};
-IngegralArray8bitInt[5] = {0};
-IngegralArray8bitInt[6] = {0};
-IngegralArray8bitInt[7] = {0};
-IngegralArray8bitInt[8] = {0};
-IngegralArray8bitInt[9] = {0};
-IngegralArray8bitInt[10] = {0};
+//IntegralArray[0] = {size2};
+//IntegralArray[1] = {mostRecentIndex};
+IntegralArray8bitInt[0] = {size3};
+IntegralArray8bitInt[1] = {2};
+derivativeArray[0] = {size};
+derivativeArray[1] = {2};
 
 }
 
@@ -585,12 +609,12 @@ void loop()
 // testing bullshit
 PIDmathPrintFlag = false;   //to toggle the PID prints
 
-//PIDResult = PIDmath(IngegralArray,300,TimeDelta,8, 1, 1, .5, .1);
+//PIDResult = PIDmath(IntegralArray,300,TimeDelta,8, 1, 1, .5, .1);
 //Serial.print("PID function output: ");
 //Serial.println(PIDResult);
 
 
-// fuck around and find out with array functions
+/* // fuck around and find out with array functions
 if (loopyboi2Flag)
 {
   loopyboi2 = loopyboi2 +1;
@@ -606,22 +630,32 @@ if (!loopyboi2Flag)
   {
     loopyboi2Flag = true;
   }
-}
+} */
 
-writeToDifferencedIntArray(IngegralArray8bitInt, loopyboi2, 8);
+//writeToDifferencedIntArray(IntegralArray8bitInt, loopyboi2, 8);
 
-Serial.print("Array entry: ");
+/* Serial.print("Array entry: ");
 Serial.print(loopyboi2);
 Serial.print(", Array readout most recent: ");
-Serial.println(IngegralArray8bitInt[IngegralArray8bitInt[1]]);
-delay(100);
-Serial.print("Array readout loop: ");
-for (size_t i = 2; i < 12; i++)
+Serial.println(IntegralArray8bitInt[IntegralArray8bitInt[1]]); */
+
+
+/* delay(100);
+Serial.print(", Array position most recent: ");
+Serial.println(derivativeArray[1]);
+Serial.print(", most recent value from: ");
+Serial.println(derivativeArray[static_cast<int>(derivativeArray[1])]);
+Serial.println("Array readout loop: ");
+for (size_t i = 2; i < size + 1; i++)
 {
-Serial.print(" : ");
-Serial.print(IngegralArray8bitInt[i]);
+//Serial.print(" Int: ");
+//Serial.print(IntegralArray8bitInt[i]);
+Serial.print(" derivative: ");
+Serial.println(derivativeArray[i]);
 }
-Serial.println();
+Serial.println(); */
+
+
 /* testInt = 300;
 Serial.print("testInt 8 bit overflow: ");
 Serial.println(PIDResult); */
