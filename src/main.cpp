@@ -1,11 +1,26 @@
 #include <Arduino.h>
 #include <math.h>
 #include <iostream>
+#include <ADC.h>
 
 #include "ValveStates.h"
 
+bool ISTHISREAL = false;  //flag for test mode vs driving real system. False means test, True means real
+bool ISVALVEONLYREAL = true;
+ADC* adc = new ADC();
+#define BANG1PT_ANALOGINPUT A21  //Pasafire options: A20,A18,A17,A16,A21(fuel line PT),A22(Lox line PT),A15, and maybe A14 that was supposed to be chamber PT?
+uint16_t currentRawValue = 0;
+float currentConvertedValue = 0;
+float fuelLinePT_linConvCoef1_m = 0.0124;
+float fuelLinePT_linConvCoef1_b = -123.17;
+float LoxLinePT_linConvCoef1_m = 0.0124;
+float LoxLinePT_linConvCoef1_b = -126.80;
+
 int8_t testInt = 0;
 ValveState bangValveState = ValveState::Closed;
+uint8_t bangValvePin = 5; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
+
+
 float loopyboi = 0;
 float controllerTargetValue = 300;
 int controllerTargetValueInt = static_cast<int>(controllerTargetValue+0.5);
@@ -48,15 +63,6 @@ float TankPressure = 0;
 float massFlow = 0;
 
 
-/* float TankPressArray[];
-float PossibleTankPressArray[];
-float optimalArray[];
-float ErrorArray[];
- */
-
-//float prevPressure = CurrPressure;
-//bool hasbeenopened = false;
-//bool ValveStillForceOpen = false;
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
 float Kp = 1.5;
@@ -279,6 +285,9 @@ float reimannSum_PID_8bitInt(int8_t inputArray[], float timeStep, int summationT
 float measurementArray [100]= {}; // up to 100 measured values at a time to use in controller
 
   float funcOutput = 0;
+  float P_p = 0;
+  float P_i = 0;
+  float P_d = 0;
   float e_p = 0;
   float e_i = 0;
   float e_d = 0;
@@ -288,6 +297,9 @@ float measurementArray [100]= {}; // up to 100 measured values at a time to use 
 float PIDmath(float inputArrayPID[], int8_t inputArrayIntPID[], float controllerSetPoint, float timeStep, float integrationSteps, float errorThreshold, float K_p, float K_i, float K_d)
 {
   funcOutput = 0;
+  P_p = 0;
+  P_i = 0;
+  P_d = 0;
   e_p = 0;
   e_i = 0;
   e_d = 0;
@@ -337,6 +349,12 @@ float PIDmath(float inputArrayPID[], int8_t inputArrayIntPID[], float controller
     Serial.println(K_d*(e_d * timeStep));  
     Serial.println(funcOutput);
   }
+
+  //P_p just for prints
+  P_p = K_p*(e_p);
+  P_i = K_i*(e_i/integrationSteps);
+  P_d = K_d*(e_d * timeStep);
+
   return funcOutput;
 }
 // testing bullshit
@@ -478,14 +496,14 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
   //minimum bang time lockouts, once they are up the valves go to plain Open/Closed states which unlocks them to be commanded again
   if (bangValveState == ValveState::BangingOpen)
   {
-    if (valveTimer >= 200)    // X ms opening/closing time
+    if (valveTimer >= 75)    // X ms opening/closing time
     {
       bangValveState = ValveState::Open;
     }
   }
   if (bangValveState == ValveState::BangingClosed)
   {
-    if (valveTimer >= 100)    // X ms opening/closing time
+    if (valveTimer >= 50)    // X ms opening/closing time
     {
       bangValveState = ValveState::Closed;
     }
@@ -539,7 +557,7 @@ float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
 //for interrupt timers, not sure how to setup to run the other stuff yet. Need to pass everything into this, then into other functions inside?
 // it should work fine, anything that needs to be updated to pass into the functions will pass through every time the interrupt runs (I think)
 void pressureUpdateFunction()
-{
+{  
   if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
   {
   //loopyboi = loopyboi + .25;
@@ -558,13 +576,92 @@ void pressureUpdateFunction()
   TankMass -= ChokedMassFlow(CurrPressure*unitConversionCosnt,orificeOutArea)*TimeDelta;
   }
   CurrPressure = CurrTankPress(TankMass)/unitConversionCosnt;
-/*   Serial.print("PizzaPress: ");
+  /*   Serial.print("PizzaPress: ");
   Serial.println(CurrTankPress(TankMass)/unitConversionCosnt); */
-  loopyboi = CurrPressure;
-  loopyboi2 = static_cast<int>(CurrPressure+0.5);
-  //Serial.print("Loopyboi: ");
-  Serial.println(loopyboi);
+
+  if (!ISTHISREAL)
+  {
+    loopyboi = CurrPressure;
+    loopyboi2 = static_cast<int>(CurrPressure+0.5);
+  }
+  else
+  {
+    //analog PT read stuff here to use real pressure value
+    currentRawValue = adc->analogRead(BANG1PT_ANALOGINPUT);
+    currentConvertedValue = fuelLinePT_linConvCoef1_m*currentRawValue + fuelLinePT_linConvCoef1_b;
+    loopyboi = currentConvertedValue;
+    loopyboi2 = static_cast<int>(currentConvertedValue+0.5);
+  }
+  Serial.print(loopyboi);
+  Serial.println(", ");   // comma delimeter
 }
+
+void serialOutputStream()
+{
+  // Set this up to create .csv formatted outputs
+  // header row: 
+  // tank1 PSI direct read, tank1 PSI controller array, tank1 bang SV state, controller1 target, controller 1 Kp, controller 1 Ki, controller 1 Kd, controller 1 ep, controller 1 ei, controller 1 ed, controller 1 Pp, controller 1 Pi, controller 1 Pd, controller 1 function output,
+  Serial.print(loopyboi);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(derivativeArray[static_cast<int>(derivativeArray[1]+0.5)]);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(static_cast<uint8_t>(bangValveState));
+  Serial.print(", ");   // comma delimeter
+  Serial.print(controllerTargetValueInt);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(Kp);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(Ki);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(Kd);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(e_p);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(e_i);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(e_d);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(P_p);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(P_i);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(P_d);
+  Serial.print(", ");   // comma delimeter
+  Serial.print(PIDResult);
+  Serial.print(", ");   // comma delimeter
+
+
+  Serial.println();  //end line change
+}
+
+
+ValveState bangValveStateIn = ValveState::Closed;
+uint8_t ValveOutputPin = 0;
+void bangValveDrive(ValveState bangValveStateIn, uint8_t ValveOutputPin)
+{
+// function for simple output drive of the valves
+// hold valve enables high, don't fuck with them in the loop, assign in setup
+
+  switch (bangValveStateIn)
+  {
+  case ValveState::Closed:
+    digitalWriteFast(ValveOutputPin, LOW);
+    break;
+  case ValveState::BangingClosed:
+    digitalWriteFast(ValveOutputPin, LOW);
+    break;
+  case ValveState::Open:
+    digitalWriteFast(ValveOutputPin, HIGH);
+    break;
+  case ValveState::BangingOpen:
+    digitalWriteFast(ValveOutputPin, HIGH);
+    break;
+  default:
+    break;
+  }
+}
+
+
 
 void controllerUpdateFunction()
 {
@@ -574,6 +671,13 @@ void controllerUpdateFunction()
   //writeToRollingArray(IngegralArray, loopyboi); //float integral array, not in use
   writeToDifferencedIntArray(IntegralArray8bitInt, loopyboi2, 8, controllerTargetValueInt);
 
+//physical outputs
+if (ISTHISREAL || ISVALVEONLYREAL)
+{
+  bangValveDrive(bangValveState, bangValvePin);
+}
+
+serialOutputStream();
 
 /* Serial.print(", Array readout most recent: float: ");
 Serial.println(IngegralArray[static_cast<int>(IngegralArray[1])]);
@@ -583,8 +687,39 @@ Serial.println(IngegralArray8bitInt[IngegralArray8bitInt[1]]); */
 }
 
 
+//////////////////////////////////////////////////////////////////////
 void setup() {
-  // put your setup code here, to run once:
+//valve output pin
+pinMode(bangValvePin, OUTPUT);
+//valveEnable Pasafire output pins
+pinMode(11, OUTPUT);
+pinMode(12, OUTPUT);
+pinMode(24, OUTPUT);
+pinMode(25, OUTPUT);
+
+///// ADC0 /////
+  // reference can be ADC_REFERENCE::REF_3V3, ADC_REFERENCE::REF_1V2 or ADC_REFERENCE::REF_EXT.
+  //adc->setReference(ADC_REFERENCE::REF_1V2, ADC_0); // change all 3.3 to 1.2 if you change the reference to 1V2
+
+  adc->adc0->setReference(ADC_REFERENCE::REF_3V3);
+  adc->adc0->setAveraging(8);                                    // set number of averages
+  adc->adc0->setResolution(16);                                   // set bits of resolution
+  adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED_16BITS); // change the conversion speed
+  adc->adc0->setSamplingSpeed(ADC_SAMPLING_SPEED::HIGH_SPEED);     // change the sampling speed
+  adc->adc0->recalibrate();
+
+///// ADC1 /////
+  adc->adc1->setReference(ADC_REFERENCE::REF_3V3);
+  adc->adc1->setAveraging(8);                                    // set number of averages
+  adc->adc1->setResolution(16);                                   // set bits of resolution
+  adc->adc1->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED_16BITS); // change the conversion speed
+  adc->adc1->setSamplingSpeed(ADC_SAMPLING_SPEED::HIGH_SPEED);     // change the sampling speed
+  adc->adc1->recalibrate();
+
+
+
+
+
 pastnArr [0] = size;
 pastNDpArr[0] = {size2};
 
