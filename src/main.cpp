@@ -6,35 +6,60 @@
 #include "ValveStates.h"
 
 bool ISTHISREAL = false;  //flag for test mode vs driving real system. False means test, True means real
-bool ISVALVEONLYREAL = true;
+bool ISVALVEONLYREAL = false;
+bool serialStreamingLog = false;
 ADC* adc = new ADC();
-#define BANG1PT_ANALOGINPUT A21  //Pasafire options: A20,A18,A17,A16,A21(fuel line PT),A22(Lox line PT),A15, and maybe A14 that was supposed to be chamber PT?
-uint16_t currentRawValue = 0;
-float currentConvertedValue = 0;
+#define BANGFUELPT_ANALOGINPUT A20  //Pasafire options: A20,A18,A17,A16,A21(fuel line PT),A22(Lox line PT),A15, and maybe A14 that was supposed to be chamber PT?
+#define BANGLOXPT_ANALOGINPUT A21  //Pasafire options: A20,A18,A17,A16,A21(fuel line PT),A22(Lox line PT),A15, and maybe A14 that was supposed to be chamber PT?
+uint16_t currentRawValue1 = 0;
+float currentConvertedValue1 = 0;
+uint16_t currentRawValue2 = 0;
+float currentConvertedValue2 = 0;
 float fuelLinePT_linConvCoef1_m = 0.0124;
 float fuelLinePT_linConvCoef1_b = -123.17;
 float LoxLinePT_linConvCoef1_m = 0.0124;
 float LoxLinePT_linConvCoef1_b = -126.80;
+float fueltankPT_linConvCoef1_m = 0.0125;
+float fueltankPT_linConvCoef1_b = -124.9;
+float LoxtankPT_linConvCoef1_m = 0.0124;
+float LoxtankPT_linConvCoef1_b = -123.57;
+elapsedMillis bangMVtimer = 0;
 
-int8_t testInt = 0;
-ValveState bangValveState = ValveState::Closed;
-uint8_t bangValvePin = 5; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
+
+float testFloat = 0;
+float mathsTestArray[12] = {};
+
+ValveState bang1ValveState = ValveState::Closed;
+ValveState bang2ValveState = ValveState::Closed;
+uint16_t bang1ValveMinOpenTime = 15;    //in ms
+uint16_t bang1ValveMinCloseTime = 15;
+uint16_t bang2ValveMinOpenTime = 75;
+uint16_t bang2ValveMinCloseTime = 50;
+
+uint8_t bang1ValvePin = 5; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
+uint8_t bang2ValvePin = 7; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
+uint8_t FuelMVValvePin = 10; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
+uint8_t LOXMVValvePin = 9; //Pasafire options: 5,6,7,8,9,10, for pyro channels: 31, 32
 
 
 float loopyboi = 0;
-float controllerTargetValue = 300;
+float controllerTargetValue = 150;
 int controllerTargetValueInt = static_cast<int>(controllerTargetValue+0.5);
 IntervalTimer pressureUpdateInterval;
 IntervalTimer banbBangcontrollerInterval;
+uint32_t controllerIntervalHz = 200;
+uint32_t sensorIntervalHz = 800;
+float controllerTimeStep = 1/controllerIntervalHz;
+float sensorIntervalTimeStep = 1/sensorIntervalHz;
 
 const int8_t size3 = 125; //max size for signed 8_t index value, I might need to make my function store these as uints and shift them to keep the indexing system at max
 int8_t mostRecentIndex8bitInt = 2;
-const int size = 8;
+const int size = 30;
 const int size2 = 125;
 float mostRecentIndex = 2;
 //float IntegralArray[size2+1] = {};
-int8_t IntegralArray8bitInt[size3+1] = {};
-float derivativeArray[size+1] = {};
+int8_t IntegralArray8bitInt[size3+2] = {};
+float derivativeArray[size+2] = {};
 int16_t loopyboi2 = 0;
 bool loopyboi2Flag = false;
 
@@ -51,11 +76,9 @@ float ATPtemp = 288.15; //K
 float Gamma = 1.4;
 float Cd = 0.973;
 float Time = 0;
-float TimeDelta = .01;
+float TimeDelta = sensorIntervalTimeStep; //artist formerly known as 0.01
 float TankMass = 0;
 float CurrPressure = 0;
-float MinimumValveOpenTime = 0.1;
-float CurrValveOpenTime = 0;
 elapsedMillis valveTimer;
 float gasDensity = 0;
 float TankPropMass = 0;
@@ -65,10 +88,83 @@ float massFlow = 0;
 
 float pastnArr[size+1] = {};      // creates arrays of given size plus 1 to leave the first value of the array it's size
 float pastNDpArr[size2+1] = {};   // creates arrays of given size plus 1 to leave the first value of the array it's size
-float Kp = 1.5;
-float Ki = 0;
-float Kd = 0;
+float Kp = 2.5;
+float Ki = 150;
+float Kd = 15;
 float Integral = 0;
+
+
+
+int rollingAve_n = 0;
+int arrayWrapSizeRollingAve = 0;
+int arrayMostRecentPositionRollingAve = 0;
+int sizeInputArrayRollingAve = 0;
+
+float rollingAverageReturn = 0;
+int rollingAveSamples = 0;
+float proportionalRollingAverage(float inputArrayRollingAve[], int rollingAveSamples)
+{
+  //rollingAveSamples = 0;
+  sizeInputArrayRollingAve = 0;
+  arrayMostRecentPositionRollingAve = 0;
+  sizeInputArrayRollingAve = static_cast<int>(inputArrayRollingAve[0]+0.5);
+  arrayMostRecentPositionRollingAve = static_cast<int>(inputArrayRollingAve[1]+0.5);
+  rollingAverageReturn = 0;
+  rollingAve_n = 0;
+  arrayWrapSizeRollingAve = 0;
+  // if statement to handle case where the input Array is smaller than the set number of terms to integrate over
+  if (sizeInputArrayRollingAve < rollingAveSamples)
+  {
+    rollingAve_n = sizeInputArrayRollingAve;
+  }
+  else 
+  {
+    rollingAve_n = rollingAveSamples;
+  }
+      //Serial.println("n from inside func BEFORE wrap math");
+      //Serial.println(rollingAve_n);
+      //rollingAve_n = 4;
+  // determine the overwrap value, if any
+  arrayWrapSizeRollingAve = rollingAve_n - ((arrayMostRecentPositionRollingAve) - (1));
+//arrayWrapSizeRollingAve = 0;
+/*       Serial.println("size input array rolling ave");
+      Serial.println(sizeInputArrayRollingAve);
+      Serial.println("array most recent index inside func");
+      Serial.println(arrayMostRecentPositionRollingAve);
+      Serial.println("n from inside func");
+      Serial.println(rollingAve_n);
+      Serial.println("array wrap side from inside func");
+      Serial.println(arrayWrapSizeRollingAve); */
+  if (arrayWrapSizeRollingAve > 0) //only true if there are enough array values to use to wrap the end of the array
+    {
+      //for (int i = arrayMostRecentPositionRollingAve; i < (sizeInputArrayRollingAve + 2); i++)
+      for (int i = arrayMostRecentPositionRollingAve; i > (1); i--)
+      {
+        rollingAverageReturn = rollingAverageReturn + ((inputArrayRollingAve[i]));
+        //Serial.print("rollingAverageValue: ");
+        //Serial.println(rollingAverageReturn);
+
+      }
+      //for (int i = 2; i < (arrayWrapSizeRollingAve + 1); i++)
+      for (int i = (sizeInputArrayRollingAve + 1); i > (sizeInputArrayRollingAve - arrayWrapSizeRollingAve + 1); i--)
+      {
+        rollingAverageReturn = rollingAverageReturn + ((inputArrayRollingAve[i]));
+        //Serial.print("rollingAverageValue: ");
+        //Serial.println(rollingAverageReturn);
+      }
+    }
+  else
+  {
+    for (int i = arrayMostRecentPositionRollingAve; i > (arrayMostRecentPositionRollingAve - rollingAve_n); i--)
+    {
+      rollingAverageReturn = rollingAverageReturn + ((inputArrayRollingAve[i]));
+        //Serial.print("rollingAverageValue: ");
+        //Serial.println(rollingAverageReturn);
+    }
+  }
+  rollingAverageReturn = rollingAverageReturn/rollingAve_n;
+  return rollingAverageReturn;
+}
 
 
   int arrayWrapSizeLinReg = 0;
@@ -285,6 +381,7 @@ float reimannSum_PID_8bitInt(int8_t inputArray[], float timeStep, int summationT
 float measurementArray [100]= {}; // up to 100 measured values at a time to use in controller
 
   float funcOutput = 0;
+  float p_rollingAve = 0;
   float P_p = 0;
   float P_i = 0;
   float P_d = 0;
@@ -297,6 +394,7 @@ float measurementArray [100]= {}; // up to 100 measured values at a time to use 
 float PIDmath(float inputArrayPID[], int8_t inputArrayIntPID[], float controllerSetPoint, float timeStep, float integrationSteps, float errorThreshold, float K_p, float K_i, float K_d)
 {
   funcOutput = 0;
+  p_rollingAve = 0;
   P_p = 0;
   P_i = 0;
   P_d = 0;
@@ -310,7 +408,9 @@ float PIDmath(float inputArrayPID[], int8_t inputArrayIntPID[], float controller
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 8, timeStep);    // derivative function calculation
  */  
   // PID function calculations - new integral differenced int style
-  e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
+  p_rollingAve = proportionalRollingAverage(inputArrayPID, 6);
+  e_p = controllerSetPoint - p_rollingAve;    // proportional offset calculation
+  //e_p = controllerSetPoint - inputArrayPID[arrayMostRecentPositionPID];    // proportional offset calculation
   e_i = reimannSum_PID_8bitInt(inputArrayIntPID, timeStep, integrationSteps);    // integral function calculation
   e_d = linearRegressionLeastSquared_PID(inputArrayPID, 5, timeStep);    // derivative function calculation
 
@@ -485,36 +585,36 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
   // When converting this to run valves on real RocketDriver code, need to use commanded open/closed states.
   
   //simulating the real prop control that will progress valve through opening states - skipping the process one, for this it doesn't matter
-  if (bangValveState == ValveState::BangOpenCommanded)
+  if (bang1ValveState == ValveState::BangOpenCommanded)
   {
-    bangValveState = ValveState::BangingOpen;
+    bang1ValveState = ValveState::BangingOpen;
   }
-  if (bangValveState == ValveState::BangCloseCommanded)
+  if (bang1ValveState == ValveState::BangCloseCommanded)
   {
-    bangValveState = ValveState::BangingClosed;
+    bang1ValveState = ValveState::BangingClosed;
   }
   //minimum bang time lockouts, once they are up the valves go to plain Open/Closed states which unlocks them to be commanded again
-  if (bangValveState == ValveState::BangingOpen)
+  if (bang1ValveState == ValveState::BangingOpen)
   {
-    if (valveTimer >= 75)    // X ms opening/closing time
+    if (valveTimer >= bang1ValveMinOpenTime)    // X ms opening/closing time
     {
-      bangValveState = ValveState::Open;
+      bang1ValveState = ValveState::Open;
     }
   }
-  if (bangValveState == ValveState::BangingClosed)
+  if (bang1ValveState == ValveState::BangingClosed)
   {
-    if (valveTimer >= 50)    // X ms opening/closing time
+    if (valveTimer >= bang1ValveMinCloseTime)    // X ms opening/closing time
     {
-      bangValveState = ValveState::Closed;
+      bang1ValveState = ValveState::Closed;
     }
   }
   // Update ValveState if Open/Closed based on PID controller output
   if (bandPIDoutput > (controllerThreshold))
   {
     //open valve
-    if (bangValveState == ValveState::Closed)
+    if (bang1ValveState == ValveState::Closed)
     {
-      bangValveState = ValveState::BangOpenCommanded;
+      bang1ValveState = ValveState::BangOpenCommanded;
       valveTimer = 0;
     }
     
@@ -522,13 +622,58 @@ void bangbangController(float bandPIDoutput, float controllerThreshold)
   if (bandPIDoutput < ((-1)*controllerThreshold))
   {
     //close valve
-    if (bangValveState == ValveState::Open)
+    if (bang1ValveState == ValveState::Open)
     {
-      bangValveState = ValveState::BangCloseCommanded;
+      bang1ValveState = ValveState::BangCloseCommanded;
       valveTimer = 0;
     }
   }
-  //Serial.println(static_cast<uint8_t>(bangValveState));
+
+  if (bang2ValveState == ValveState::BangOpenCommanded)
+  {
+    bang2ValveState = ValveState::BangingOpen;
+  }
+  if (bang2ValveState == ValveState::BangCloseCommanded)
+  {
+    bang2ValveState = ValveState::BangingClosed;
+  }
+  //minimum bang time lockouts, once they are up the valves go to plain Open/Closed states which unlocks them to be commanded again
+  if (bang2ValveState == ValveState::BangingOpen)
+  {
+    if (valveTimer >= bang2ValveMinOpenTime)    // X ms opening/closing time
+    {
+      bang2ValveState = ValveState::Open;
+    }
+  }
+  if (bang2ValveState == ValveState::BangingClosed)
+  {
+    if (valveTimer >= bang2ValveMinCloseTime)    // X ms opening/closing time
+    {
+      bang2ValveState = ValveState::Closed;
+    }
+  }
+  // Update ValveState if Open/Closed based on PID controller output
+  if (bandPIDoutput > (controllerThreshold))
+  {
+    //open valve
+    if (bang2ValveState == ValveState::Closed)
+    {
+      bang2ValveState = ValveState::BangOpenCommanded;
+      valveTimer = 0;
+    }
+    
+  }
+  if (bandPIDoutput < ((-1)*controllerThreshold))
+  {
+    //close valve
+    if (bang2ValveState == ValveState::Open)
+    {
+      bang2ValveState = ValveState::BangCloseCommanded;
+      valveTimer = 0;
+    }
+  }
+  //Serial.println(static_cast<uint8_t>(bang1ValveState));
+  //Serial.println(static_cast<uint8_t>(bang2ValveState));
 }
 
 float CurrTankPress(float TankPropMass)
@@ -558,7 +703,8 @@ float ChokedMassFlow(float UpstreamPressure, float chockedOrificeArea)
 // it should work fine, anything that needs to be updated to pass into the functions will pass through every time the interrupt runs (I think)
 void pressureUpdateFunction()
 {  
-  if (bangValveState == ValveState::Open || bangValveState == ValveState::BangingOpen)
+cli();
+  if (bang1ValveState == ValveState::Open || bang1ValveState == ValveState::BangingOpen)
   {
   //loopyboi = loopyboi + .25;
   //loopyboi2 = static_cast<int>(loopyboi+0.5);
@@ -567,7 +713,7 @@ void pressureUpdateFunction()
   TankMass -= ChokedMassFlow(CurrPressure*unitConversionCosnt,orificeOutArea)*TimeDelta;
   //Serial.println("we are Open");
   }
-  if (bangValveState == ValveState::Closed || bangValveState == ValveState::BangingClosed)
+  if (bang1ValveState == ValveState::Closed || bang1ValveState == ValveState::BangingClosed)
   {
   //loopyboi = loopyboi - .15;
   //loopyboi2 = static_cast<int>(loopyboi+0.5);
@@ -587,51 +733,66 @@ void pressureUpdateFunction()
   else
   {
     //analog PT read stuff here to use real pressure value
-    currentRawValue = adc->analogRead(BANG1PT_ANALOGINPUT);
-    currentConvertedValue = fuelLinePT_linConvCoef1_m*currentRawValue + fuelLinePT_linConvCoef1_b;
-    loopyboi = currentConvertedValue;
-    loopyboi2 = static_cast<int>(currentConvertedValue+0.5);
+    currentRawValue1 = adc->analogRead(BANGFUELPT_ANALOGINPUT);
+    currentConvertedValue1 = fueltankPT_linConvCoef1_m*currentRawValue1 + fueltankPT_linConvCoef1_b;
+    loopyboi = currentConvertedValue1;
+    loopyboi2 = static_cast<int>(currentConvertedValue1+0.5);
   }
-  Serial.print(loopyboi);
-  Serial.println(", ");   // comma delimeter
+  if (serialStreamingLog)
+  {
+    Serial.print(loopyboi);
+    Serial.println(", ");   // comma delimeter
+  }
+    Serial.print(loopyboi);
+    Serial.println(", ");   // comma delimeter
+
+  writeToRollingArray(derivativeArray, loopyboi);   //array for use in derivative
+  //writeToRollingArray(IngegralArray, loopyboi); //float integral array, not in use
+  writeToDifferencedIntArray(IntegralArray8bitInt, loopyboi2, 8, controllerTargetValueInt);
+sei();
 }
 
-void serialOutputStream()
+void serialOutputStream(bool isStreamLive)
 {
-  // Set this up to create .csv formatted outputs
-  // header row: 
-  // tank1 PSI direct read, tank1 PSI controller array, tank1 bang SV state, controller1 target, controller 1 Kp, controller 1 Ki, controller 1 Kd, controller 1 ep, controller 1 ei, controller 1 ed, controller 1 Pp, controller 1 Pi, controller 1 Pd, controller 1 function output,
-  Serial.print(loopyboi);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(derivativeArray[static_cast<int>(derivativeArray[1]+0.5)]);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(static_cast<uint8_t>(bangValveState));
-  Serial.print(", ");   // comma delimeter
-  Serial.print(controllerTargetValueInt);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(Kp);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(Ki);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(Kd);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(e_p);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(e_i);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(e_d);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(P_p);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(P_i);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(P_d);
-  Serial.print(", ");   // comma delimeter
-  Serial.print(PIDResult);
-  Serial.print(", ");   // comma delimeter
+  if (isStreamLive)
+  {
+    // Set this up to create .csv formatted outputs
+    // header row: 
+    // tank1 PSI direct read, tank1 PSI controller array, tank1 bang SV state, controller1 target, controller 1 Kp, controller 1 Ki, controller 1 Kd, controller 1 ep, controller 1 ei, controller 1 ed, controller 1 Pp, controller 1 Pi, controller 1 Pd, controller 1 function output,
+    Serial.print(loopyboi);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(p_rollingAve);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(derivativeArray[static_cast<int>(derivativeArray[1]+0.5)]);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(static_cast<uint8_t>(bang1ValveState));
+    Serial.print(", ");   // comma delimeter
+    Serial.print(controllerTargetValue);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(Kp);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(Ki);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(Kd);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(e_p);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(e_i);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(e_d);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(P_p);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(P_i);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(P_d);
+    Serial.print(", ");   // comma delimeter
+    Serial.print(PIDResult);
+    Serial.print(", ");   // comma delimeter
 
 
-  Serial.println();  //end line change
+    Serial.println();  //end line change
+  }
 }
 
 
@@ -667,17 +828,14 @@ void controllerUpdateFunction()
 {
   PIDResult = PIDmath(derivativeArray, IntegralArray8bitInt, controllerTargetValue,TimeDelta, 100, 0.1 , Kp, Ki, Kd);
   bangbangController(PIDResult, 1);
-  writeToRollingArray(derivativeArray, loopyboi);   //array for use in derivative
-  //writeToRollingArray(IngegralArray, loopyboi); //float integral array, not in use
-  writeToDifferencedIntArray(IntegralArray8bitInt, loopyboi2, 8, controllerTargetValueInt);
 
 //physical outputs
 if (ISTHISREAL || ISVALVEONLYREAL)
 {
-  bangValveDrive(bangValveState, bangValvePin);
+  bangValveDrive(bang1ValveState, bang1ValvePin);
 }
 
-serialOutputStream();
+serialOutputStream(serialStreamingLog);
 
 /* Serial.print(", Array readout most recent: float: ");
 Serial.println(IngegralArray[static_cast<int>(IngegralArray[1])]);
@@ -690,7 +848,10 @@ Serial.println(IngegralArray8bitInt[IngegralArray8bitInt[1]]); */
 //////////////////////////////////////////////////////////////////////
 void setup() {
 //valve output pin
-pinMode(bangValvePin, OUTPUT);
+pinMode(bang1ValvePin, OUTPUT);
+pinMode(bang2ValvePin, OUTPUT);
+pinMode(FuelMVValvePin, OUTPUT);
+pinMode(LOXMVValvePin, OUTPUT);
 //valveEnable Pasafire output pins
 pinMode(11, OUTPUT);
 pinMode(12, OUTPUT);
@@ -723,9 +884,9 @@ pinMode(25, OUTPUT);
 pastnArr [0] = size;
 pastNDpArr[0] = {size2};
 
-pressureUpdateInterval.begin(pressureUpdateFunction, 5000);
+pressureUpdateInterval.begin(pressureUpdateFunction, 1000000/sensorIntervalHz);
 pressureUpdateInterval.priority(126);
-banbBangcontrollerInterval.begin(controllerUpdateFunction, 10000);
+banbBangcontrollerInterval.begin(controllerUpdateFunction, 1000000/controllerIntervalHz);
 banbBangcontrollerInterval.priority(124);
 
 // testing bullshit
@@ -736,11 +897,47 @@ IntegralArray8bitInt[1] = {2};
 derivativeArray[0] = {size};
 derivativeArray[1] = {2};
 
+/* mathsTestArray[0] = {10};
+mathsTestArray[1] = {3};
+mathsTestArray[2] = {1};
+mathsTestArray[3] = {2};
+mathsTestArray[4] = {3};
+mathsTestArray[5] = {4};
+mathsTestArray[6] = {5};
+mathsTestArray[7] = {6};
+mathsTestArray[8] = {7};
+mathsTestArray[9] = {8};
+mathsTestArray[10] = {9};
+mathsTestArray[11] = {10}; */
+
+
 }
 
 void loop() 
 {
+  digitalWriteFast(11, HIGH);
+  digitalWriteFast(12, HIGH);
+  digitalWriteFast(24, HIGH);
+  digitalWriteFast(25, HIGH);
 
+if (loopyboi <= 800)
+{
+  if (bangMVtimer <= (1000 * 1))
+  {
+    digitalWriteFast(FuelMVValvePin,HIGH);
+    digitalWriteFast(LOXMVValvePin,HIGH);
+  }
+  else
+  {
+    digitalWriteFast(FuelMVValvePin,LOW);
+    digitalWriteFast(LOXMVValvePin,LOW);
+  }
+}
+else
+{
+    digitalWriteFast(FuelMVValvePin,HIGH);
+    digitalWriteFast(LOXMVValvePin,HIGH);
+}
 // testing bullshit
 PIDmathPrintFlag = false;   //to toggle the PID prints
 
@@ -777,21 +974,21 @@ Serial.println(IntegralArray8bitInt[IntegralArray8bitInt[1]]); */
 
 /* delay(100);
 Serial.print(", Array position most recent: ");
-Serial.println(derivativeArray[1]);
+Serial.println(mathsTestArray[1]);
 Serial.print(", most recent value from: ");
-Serial.println(derivativeArray[static_cast<int>(derivativeArray[1])]);
+Serial.println(mathsTestArray[static_cast<int>(mathsTestArray[1])]);
 Serial.println("Array readout loop: ");
-for (size_t i = 2; i < size + 1; i++)
+for (size_t i = 2; i < static_cast<int>(mathsTestArray[0]) + 2; i++)
 {
 //Serial.print(" Int: ");
 //Serial.print(IntegralArray8bitInt[i]);
-Serial.print(" derivative: ");
-Serial.println(derivativeArray[i]);
+Serial.print(" mathsTestArray: ");
+Serial.println(mathsTestArray[i]);
 }
-Serial.println(); */
+Serial.println();
+cli();
+testFloat = proportionalRollingAverage(mathsTestArray, 4);
+sei();
+Serial.println(testFloat); */
 
-
-/* testInt = 300;
-Serial.print("testInt 8 bit overflow: ");
-Serial.println(PIDResult); */
 }
